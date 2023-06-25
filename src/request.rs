@@ -1,56 +1,11 @@
 use std::collections::HashMap;
 
-use crate::context::Context;
-use crate::List;
+use crate::{Context, List};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Requests {
-    #[serde(flatten)]
-    pub requests: HashMap<String, Request>,
-}
-
-impl Default for Requests {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Requests {
-    pub fn new() -> Self {
-        Self {
-            requests: HashMap::new(),
-        }
-    }
-
-    pub fn merge(&mut self, other: Requests) {
-        for (k, v) in other.requests {
-            self.requests.insert(k, v);
-        }
-    }
-}
-
-impl IntoIterator for Requests {
-    type Item = Vec<String>;
-    type IntoIter = std::iter::Map<
-        std::collections::hash_map::IntoIter<String, Request>,
-        fn((String, Request)) -> Vec<String>,
-    >;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.requests.into_iter().map(|(name, request)| {
-            vec![
-                name.clone(),
-                request.method.clone(),
-                request.url.clone(),
-                request.description.clone(),
-            ]
-        })
-    }
-}
-
-impl List for Requests {
+impl List for HashMap<String, Request> {
     fn headers(&self) -> Vec<String> {
         vec![
             "Name".into(),
@@ -59,6 +14,28 @@ impl List for Requests {
             "Description".into(),
         ]
     }
+
+    fn values(&self) -> Vec<Vec<String>> {
+        self.iter()
+            .map(|(n, r)| {
+                vec![
+                    n.clone(),
+                    r.method.clone(),
+                    r.url.clone(),
+                    r.description.clone(),
+                ]
+            })
+            .collect()
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum RequestError {
+    #[error("http error: {0}")]
+    Http(reqwest::Error),
+
+    #[error("unsupported method: {0}")]
+    UnsupportedMethod(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,7 +58,7 @@ fn default_method() -> String {
 }
 
 impl Request {
-    pub fn apply(&mut self, context: &Context) {
+    pub fn apply<C: Context>(&mut self, context: &C) {
         self.description = context.apply(&self.description);
         self.url = context.apply(&self.url);
         self.method = context.apply(&self.method);
@@ -119,6 +96,31 @@ impl Request {
                 }
             }
         }
+    }
+
+    pub async fn request(&self) -> Result<reqwest::Response, RequestError> {
+        use reqwest::Client;
+
+        let mut builder = match self.method.as_str() {
+            "GET" => Client::new().get(&self.url),
+            "POST" => Client::new().post(&self.url),
+            "PUT" => Client::new().put(&self.url),
+            "DELETE" => Client::new().delete(&self.url),
+            _ => return Err(RequestError::UnsupportedMethod(self.method.clone())),
+        };
+
+        for (key, value) in self.headers.iter() {
+            builder = builder.header(key, value);
+        }
+
+        builder = builder.query(&self.query_parameters);
+
+        // TODO - add payload
+        // if let Some(payload) = &self.payload {
+        //     builder = builder.body(payload);
+        // }
+
+        Ok(builder.send().await.map_err(|e| RequestError::Http(e))?)
     }
 }
 
@@ -214,17 +216,16 @@ payload:
 "#;
 
         let mut request: Request = serde_yaml::from_str(request).unwrap();
-        let context: HashMap<String, String> = vec![
+        let mut context = HashMap::new();
+        context.extend(vec![
             (
                 "base_url".to_string(),
                 "https://api.example.com".to_string(),
             ),
             ("token".to_string(), "your-token".to_string()),
             ("value1".to_string(), "value1".to_string()),
-        ]
-        .into_iter()
-        .collect();
-        dbg!(context.clone());
+        ]);
+
         request.apply(&context);
 
         assert_eq!(request.description, "post using key/value pairs");

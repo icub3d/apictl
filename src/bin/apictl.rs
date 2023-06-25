@@ -1,11 +1,12 @@
-use std::fs;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use apictl::{config::Config, context::Context, List};
+use apictl::{Config, List, Response};
 
-use anyhow::Result;
+use anyhow::{Context as AnyhowContext, Result};
 use clap::{Parser, Subcommand};
 use prettytable::{Cell, Row, Table};
+use walkdir::WalkDir;
 
 #[derive(Parser)]
 #[command(name = "apictl")]
@@ -14,7 +15,7 @@ use prettytable::{Cell, Row, Table};
 #[command(version = "0.1")]
 #[command(long_about = None)]
 struct Args {
-    /// The folder containing the configuration files.
+    /// The folder containing the configuration and cache files.
     #[arg(short, long, value_name = "CONFIG", default_value = ".apictl")]
     config: PathBuf,
 
@@ -83,22 +84,23 @@ impl std::str::FromStr for OutputFormat {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Parse configuration files.
-    let mut cfg = Config::default();
-    if let Ok(entries) = fs::read_dir(args.config) {
-        for entry in entries.flatten() {
+    let mut cfg: Config<HashMap<String, String>> = Config::default();
+    for entry in WalkDir::new(&args.config).follow_links(true) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
             let path = entry.path();
-            if let Some(extension) = path.extension() {
-                if extension == "yaml" || extension == "yml" {
-                    cfg.merge(Config::new(path.to_str().unwrap())?);
+            if let Some(ext) = path.extension() {
+                if ext == "yaml" || ext == "yml" {
+                    let c = Config::new(path.to_str().context("non-ascii path")?)?;
+                    cfg.merge(c);
                 }
             }
         }
-    } else {
-        println!("Failed to read the folder.");
     }
 
     // Execute the command.
@@ -108,15 +110,28 @@ fn main() -> Result<()> {
                 display(output, cfg.requests)?;
             }
             Requests::Run { contexts, requests } => {
-                let mut context = Context::new();
+                let mut context: HashMap<String, String> = HashMap::new();
                 for c in &contexts {
-                    context.merge(cfg.contexts.contexts.get(c).unwrap());
+                    context.extend(
+                        cfg.contexts
+                            .get(c)
+                            .unwrap()
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone())),
+                    );
                 }
-                println!("{:?}", context);
                 for r in requests {
-                    let request = cfg.requests.requests.get_mut(&r).unwrap();
+                    let request = cfg.requests.get_mut(&r).unwrap();
                     request.apply(&context);
-                    println!("{:?}", request);
+                    let result = request.request().await?;
+                    let resp = Response::from(result).await?;
+                    let mut path = args.config.clone();
+                    path.push("cache");
+                    std::fs::create_dir_all(&path)?;
+                    path.push(&r);
+                    path.set_extension("yaml");
+                    resp.save::<HashMap<String, String>>(&r, &path)?;
+                    println!("{}", resp.body);
                 }
             }
         },
@@ -136,7 +151,7 @@ fn display<L: List>(format: OutputFormat, list: L) -> Result<()> {
             println!("{}", serde_yaml::to_string(&list)?);
         }
         OutputFormat::TSV => {
-            for l in list {
+            for l in list.values() {
                 println!("{}", l.join("\t"));
             }
         }
@@ -147,7 +162,7 @@ fn display<L: List>(format: OutputFormat, list: L) -> Result<()> {
                 header.add_cell(Cell::new(&h).style_spec("b"));
             }
             table.add_row(header);
-            for l in list {
+            for l in list.values() {
                 let mut row = Row::empty();
                 for c in l {
                     row.add_cell(Cell::new(&c));

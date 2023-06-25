@@ -58,6 +58,6 @@ requests:
   get:
     tags: [get]
     description: a simple get
-    url: "{{base_url}}/endpoint2"
+    url: "{{base_url}}/posts"
     query_parameters:
       _limit: "{{pagination_limit}}"
