@@ -1,14 +1,9 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+use serde::Serialize;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod config;
+pub mod context;
+pub mod request;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub trait List: Serialize + IntoIterator<Item = Vec<String>> {
+    fn headers(&self) -> Vec<String>;
 }
