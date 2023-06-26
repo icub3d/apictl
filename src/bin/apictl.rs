@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use apictl::{Config, List, Response};
+use apictl::{Config, List, OutputFormat, Response};
 
-use anyhow::{Context as AnyhowContext, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use prettytable::{Cell, Row, Table};
-use walkdir::WalkDir;
 
 #[derive(Parser)]
 #[command(name = "apictl")]
@@ -64,62 +62,21 @@ enum Contexts {
     },
 }
 
-#[derive(Clone)]
-enum OutputFormat {
-    Table,
-    TSV,
-    Yaml,
-}
-
-impl std::str::FromStr for OutputFormat {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "table" => Ok(OutputFormat::Table),
-            "tsv" => Ok(OutputFormat::TSV),
-            "yaml" => Ok(OutputFormat::Yaml),
-            _ => Err(format!("Unknown format: {}", s)),
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Parse configuration files.
-    let mut cfg: Config<HashMap<String, String>> = Config::default();
-    for entry in WalkDir::new(&args.config).follow_links(true) {
-        let entry = entry?;
-        if entry.file_type().is_file() {
-            let path = entry.path();
-            if let Some(ext) = path.extension() {
-                if ext == "yaml" || ext == "yml" {
-                    let c = Config::new(path.to_str().context("non-ascii path")?)?;
-                    cfg.merge(c);
-                }
-            }
-        }
-    }
+    let mut cfg: Config<HashMap<String, String>> = Config::new_from_dir(&args.config)?;
 
     // Execute the command.
     match args.command {
         Command::Requests(requests) => match requests {
             Requests::List { output } => {
-                display(output, cfg.requests)?;
+                cfg.requests.output(output)?;
             }
             Requests::Run { contexts, requests } => {
-                let mut context: HashMap<String, String> = HashMap::new();
-                for c in &contexts {
-                    context.extend(
-                        cfg.contexts
-                            .get(c)
-                            .unwrap()
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone())),
-                    );
-                }
+                let context = cfg.merge_contexts(&contexts)?;
                 for r in requests {
                     let request = cfg.requests.get_mut(&r).unwrap();
                     request.apply(&context);
@@ -137,41 +94,10 @@ async fn main() -> Result<()> {
         },
         Command::Contexts(contexts) => match contexts {
             Contexts::List { output } => {
-                display(output, cfg.contexts)?;
+                cfg.contexts.output(output)?;
             }
         },
     }
-
-    Ok(())
-}
-
-fn display<L: List>(format: OutputFormat, list: L) -> Result<()> {
-    match format {
-        OutputFormat::Yaml => {
-            println!("{}", serde_yaml::to_string(&list)?);
-        }
-        OutputFormat::TSV => {
-            for l in list.values() {
-                println!("{}", l.join("\t"));
-            }
-        }
-        OutputFormat::Table => {
-            let mut table = Table::new();
-            let mut header = Row::empty();
-            for h in list.headers() {
-                header.add_cell(Cell::new(&h).style_spec("b"));
-            }
-            table.add_row(header);
-            for l in list.values() {
-                let mut row = Row::empty();
-                for c in l {
-                    row.add_cell(Cell::new(&c));
-                }
-                table.add_row(row);
-            }
-            table.printstd();
-        }
-    };
 
     Ok(())
 }

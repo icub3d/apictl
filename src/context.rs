@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
-use crate::List;
-
 use serde::Serialize;
 
-pub trait Context {
+use crate::List;
+
+pub trait Context: Serialize {
     fn apply(&self, s: &str) -> String;
+    fn merge(&mut self, other: &Self);
 }
 
-impl<C: Context + Serialize> List for HashMap<String, C> {
+impl<C: Context> List for HashMap<String, C> {
     fn headers(&self) -> Vec<String> {
         vec!["Name".into()]
     }
@@ -27,6 +28,10 @@ impl Context for HashMap<String, String> {
         }
 
         output
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.extend(other.clone());
     }
 }
 

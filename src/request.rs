@@ -62,16 +62,16 @@ impl Request {
         self.description = context.apply(&self.description);
         self.url = context.apply(&self.url);
         self.method = context.apply(&self.method);
-        for (_, value) in &mut self.headers {
+        for value in self.headers.values_mut() {
             *value = context.apply(value);
         }
-        for (_, value) in &mut self.query_parameters {
+        for value in self.query_parameters.values_mut() {
             *value = context.apply(value);
         }
         match &mut self.payload {
             Payload::None => {}
             Payload::Form { data } => {
-                for (_, value) in data {
+                for value in data.values_mut() {
                     *value = context.apply(value);
                 }
             }
@@ -84,7 +84,7 @@ impl Request {
                 }
             },
             Payload::MultiPart { data } => {
-                for (_, value) in data {
+                for value in data.values_mut() {
                     match value {
                         MultiPartField::Text { data } => {
                             *data = context.apply(data);
@@ -120,13 +120,14 @@ impl Request {
         //     builder = builder.body(payload);
         // }
 
-        Ok(builder.send().await.map_err(|e| RequestError::Http(e))?)
+        builder.send().await.map_err(RequestError::Http)
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Payload {
+    #[default]
     None,
     Form {
         data: HashMap<String, String>,
@@ -139,13 +140,7 @@ pub enum Payload {
     },
 }
 
-impl Default for Payload {
-    fn default() -> Self {
-        Payload::None
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum RawPayload {
     File { path: String },

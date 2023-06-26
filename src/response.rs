@@ -51,12 +51,12 @@ impl Response {
                 Ok((
                     k.to_string(),
                     v.to_str()
-                        .map_err(|e| RequestError::NonAsciiHeader(e))?
+                        .map_err(RequestError::NonAsciiHeader)?
                         .to_string(),
                 ))
             })
             .collect::<Result<_>>()?;
-        let body = response.text().await.map_err(|e| RequestError::Http(e))?;
+        let body = response.text().await.map_err(RequestError::Http)?;
         Ok(Self {
             status_code,
             headers,
@@ -67,6 +67,6 @@ impl Response {
     pub fn save<C: Context + Serialize>(&self, name: &str, path: &PathBuf) -> Result<()> {
         let mut config: Config<C> = Config::default();
         config.responses.insert(name.to_string(), self.clone());
-        std::fs::write(path, serde_yaml::to_string(&config)?).map_err(|e| RequestError::Io(e))
+        std::fs::write(path, serde_yaml::to_string(&config)?).map_err(RequestError::Io)
     }
 }
