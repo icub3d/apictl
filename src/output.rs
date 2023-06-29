@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use prettytable::{Cell, Row, Table};
 use serde::Serialize;
 use thiserror::Error;
@@ -66,5 +68,15 @@ pub trait List: Serialize {
         };
 
         Ok(())
+    }
+}
+
+impl List for HashMap<String, HashMap<String, String>> {
+    fn headers(&self) -> Vec<String> {
+        vec!["Name".into()]
+    }
+
+    fn values(&self) -> Vec<Vec<String>> {
+        self.iter().map(|(n, _)| vec![n.clone()]).collect()
     }
 }

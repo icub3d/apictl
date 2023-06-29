@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{Config, Context, List};
+use crate::{Config, List};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -64,8 +64,8 @@ impl Response {
         })
     }
 
-    pub fn save<C: Context + Serialize>(&self, name: &str, path: &PathBuf) -> Result<()> {
-        let mut config: Config<C> = Config::default();
+    pub fn save(&self, name: &str, path: &PathBuf) -> Result<()> {
+        let mut config: Config = Config::default();
         config.responses.insert(name.to_string(), self.clone());
         std::fs::write(path, serde_yaml::to_string(&config)?).map_err(RequestError::Io)
     }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{Context, List};
+use crate::{Config, List};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -34,11 +34,14 @@ pub enum RequestError {
     #[error("http error: {0}")]
     Http(reqwest::Error),
 
+    #[error("io error: {0}")]
+    Io(std::io::Error),
+
     #[error("unsupported method: {0}")]
     UnsupportedMethod(String),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Request {
     pub description: String,
     pub tags: Vec<String>,
@@ -50,7 +53,7 @@ pub struct Request {
     #[serde(default)]
     pub query_parameters: HashMap<String, String>,
     #[serde(default)]
-    pub payload: Payload,
+    pub body: Body,
 }
 
 fn default_method() -> String {
@@ -58,39 +61,39 @@ fn default_method() -> String {
 }
 
 impl Request {
-    pub fn apply<C: Context>(&mut self, context: &C) {
-        self.description = context.apply(&self.description);
-        self.url = context.apply(&self.url);
-        self.method = context.apply(&self.method);
+    pub fn apply(&mut self, cfg: &Config, cxt: &HashMap<String, String>) {
+        self.description = cfg.apply(cxt, &self.description);
+        self.url = cfg.apply(cxt, &self.url);
+        self.method = cfg.apply(cxt, &self.method);
         for value in self.headers.values_mut() {
-            *value = context.apply(value);
+            *value = cfg.apply(cxt, value);
         }
         for value in self.query_parameters.values_mut() {
-            *value = context.apply(value);
+            *value = cfg.apply(cxt, value);
         }
-        match &mut self.payload {
-            Payload::None => {}
-            Payload::Form { data } => {
+        match &mut self.body {
+            Body::None => {}
+            Body::Form { data } => {
                 for value in data.values_mut() {
-                    *value = context.apply(value);
+                    *value = cfg.apply(cxt, value);
                 }
             }
-            Payload::Raw { body } => match body {
-                RawPayload::File { path } => {
-                    *path = context.apply(path);
+            Body::Raw { from } => match from {
+                RawBody::File { path } => {
+                    *path = cfg.apply(cxt, path);
                 }
-                RawPayload::Raw { data } => {
-                    *data = context.apply(data);
+                RawBody::Text { data } => {
+                    *data = cfg.apply(cxt, data);
                 }
             },
-            Payload::MultiPart { data } => {
+            Body::MultiPart { data } => {
                 for value in data.values_mut() {
                     match value {
                         MultiPartField::Text { data } => {
-                            *data = context.apply(data);
+                            *data = cfg.apply(cxt, data);
                         }
                         MultiPartField::File { path } => {
-                            *path = context.apply(path);
+                            *path = cfg.apply(cxt, path);
                         }
                     }
                 }
@@ -115,43 +118,75 @@ impl Request {
 
         builder = builder.query(&self.query_parameters);
 
-        // TODO - add payload
-        // if let Some(payload) = &self.payload {
-        //     builder = builder.body(payload);
-        // }
+        match &self.body {
+            Body::None => {}
+            Body::Form { data } => {
+                builder = builder.form(data);
+            }
+            Body::Raw { from } => match from {
+                RawBody::File { path } => {
+                    builder =
+                        builder.body(std::fs::read_to_string(path).map_err(RequestError::Io)?);
+                }
+                RawBody::Text { data } => {
+                    dbg!(&data);
+                    builder = builder.body(data.clone());
+                }
+            },
+            Body::MultiPart { data } => {
+                let mut form = reqwest::multipart::Form::new();
+                for (key, value) in data.iter() {
+                    match value {
+                        MultiPartField::Text { data } => {
+                            form = form.text(key.clone(), data.clone());
+                        }
+                        MultiPartField::File { path } => {
+                            let mut part = reqwest::multipart::Part::stream(
+                                tokio::fs::File::open(path)
+                                    .await
+                                    .map_err(RequestError::Io)?,
+                            );
+                            part = part.file_name(path.clone());
+                            form = form.part(key.clone(), part);
+                        }
+                    }
+                }
+                builder = builder.multipart(form);
+            }
+        }
 
         builder.send().await.map_err(RequestError::Http)
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum Payload {
+pub enum Body {
     #[default]
     None,
     Form {
         data: HashMap<String, String>,
     },
     Raw {
-        body: RawPayload,
+        from: RawBody,
     },
     MultiPart {
         data: HashMap<String, MultiPartField>,
     },
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum RawPayload {
+pub enum RawBody {
     File { path: String },
-    Raw { data: String },
+    Text { data: String },
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum MultiPartField {
-    Text { data: String },
     File { path: String },
+    Text { data: String },
 }
 
 #[cfg(test)]
@@ -167,7 +202,7 @@ url: https://api.example.com/endpoint1
 method: POST
 headers:
   Authorization: Bearer your-token
-payload:
+body:
   type: form
   data:
     key1: value1
@@ -182,8 +217,8 @@ payload:
         assert_eq!(request.method, "POST");
         assert_eq!(request.headers.len(), 1);
         assert_eq!(
-            request.payload,
-            Payload::Form {
+            request.body,
+            Body::Form {
                 data: vec![
                     ("key1".to_string(), "value1".to_string()),
                     ("key2".to_string(), "value2".to_string()),
@@ -199,20 +234,20 @@ payload:
         let request = r#"
 tags: [post, form]
 description: post using key/value pairs
-url: "{{base_url}}/endpoint1"
+url: "${base_url}/endpoint1"
 method: POST
 headers:
-  Authorization: "Bearer {{token}}"
-payload:
+  Authorization: "Bearer ${token}"
+body:
   type: form
   data:
-    key1: "{{value1}}"
+    key1: "${value1}"
     key2: value2
 "#;
 
         let mut request: Request = serde_yaml::from_str(request).unwrap();
-        let mut context = HashMap::new();
-        context.extend(vec![
+        let mut cxt = HashMap::new();
+        cxt.extend(vec![
             (
                 "base_url".to_string(),
                 "https://api.example.com".to_string(),
@@ -221,7 +256,9 @@ payload:
             ("value1".to_string(), "value1".to_string()),
         ]);
 
-        request.apply(&context);
+        let cfg = Config::default();
+
+        request.apply(&cfg, &cxt);
 
         assert_eq!(request.description, "post using key/value pairs");
         assert_eq!(request.tags, vec!["post", "form"]);
@@ -229,8 +266,8 @@ payload:
         assert_eq!(request.method, "POST");
         assert_eq!(request.headers.len(), 1);
         assert_eq!(
-            request.payload,
-            Payload::Form {
+            request.body,
+            Body::Form {
                 data: vec![
                     ("key1".to_string(), "value1".to_string()),
                     ("key2".to_string(), "value2".to_string()),

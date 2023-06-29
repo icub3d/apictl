@@ -1,63 +1,35 @@
 requests:
-  post-form:
-    tags: [post, form]
-    description: post using key/value pairs
-    url: "{{base_url}}/endpoint1"
-    method: POST
-    headers:
-      Authorization: Bearer your-token
-    payload:
-      type: form
-      data:
-        key1: value1
-        key2: value2
-
-  post-multipart:
-    tags: [post, form]
-    description: post using key/value pairs
-    url: "{{base_url}}/endpoint1"
-    method: POST
-    headers:
-      Authorization: Bearer your-token
-    payload:
-      type: multipart
-      data:
-        file1:
-          type: file
-          path: ./examples/file.json
-        string1:
-          type: text
-          data: "This is a test!"
-
-  post-raw-file:
-    tags: [post, raw, file]
-    description: post using a file
-    url: "{{base_url}/endpoint2"
-    method: POST
-    headers:
-      Content-Type: application/json
-    payload:
-      type: raw
-      body:
-        type: file
-        path: ./examples/file.json
-
-  post-raw-string:
-    tags: [post, raw, string]
-    description: post using a raw string
-    url: "{{base_url}}/endpoint2"
-    method: POST
-    headers:
-      Content-Type: application/json
-    payload:
-      type: raw
-      body:
-        type: raw
-        data: '{"key": "value"}'
-
-  get:
+  get-posts:
     tags: [get]
     description: a simple get
-    url: "{{base_url}}/posts"
+    url: "${base_url}/posts"
     query_parameters:
-      _limit: "{{pagination_limit}}"
+      _limit: "${pagination_limit}"
+
+  get-user-from-first-post:
+    tags: [get]
+    description: get the info for the first user from the call to get-posts
+    url: "${base_url}/users/${response.get-posts.0.userId}"
+
+  new-post:
+    tags: [post]
+    description: make a new post
+    url: "${base_url}/posts"
+    method: "POST"
+    headers:
+      content-type: application/json
+    body:
+      type: raw
+      from:
+        type: text
+        data: |
+          {
+            "userId": 1,
+            "title": "test post",
+            "body": "This is a test post to the json server."
+          }
+
+  get-new-post:
+    tags: [get]
+    description: get the post from new-post
+    url: "${base_url}/posts/${response.new-post.id}"

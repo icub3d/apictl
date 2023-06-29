@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::{Context, Request, Response};
+use crate::{Request, Response};
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use walkdir::WalkDir;
 
@@ -22,10 +22,10 @@ pub enum Error {
     ContextNotFound(String),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Config<C: Context> {
+#[derive(Default, Debug, Deserialize, Serialize)]
+pub struct Config {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub contexts: HashMap<String, C>,
+    pub contexts: HashMap<String, HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub requests: HashMap<String, Request>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -34,24 +34,14 @@ pub struct Config<C: Context> {
 
 type Result<T> = std::result::Result<T, Error>;
 
-impl<C: Context> Default for Config<C> {
-    fn default() -> Self {
-        Self {
-            contexts: HashMap::default(),
-            requests: HashMap::default(),
-            responses: HashMap::default(),
-        }
-    }
-}
-
-impl<C: Context + DeserializeOwned + Default> Config<C> {
+impl Config {
     pub fn new(path: &str) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
         Ok(serde_yaml::from_str(&contents)?)
     }
 
     pub fn new_from_dir(path: &PathBuf) -> Result<Self> {
-        let mut cfg: Config<C> = Config::default();
+        let mut cfg: Config = Config::default();
         for entry in WalkDir::new(path).follow_links(true) {
             let entry = entry.map_err(|e| Error::Path(e.to_string()))?;
             if entry.file_type().is_file() {
@@ -69,28 +59,114 @@ impl<C: Context + DeserializeOwned + Default> Config<C> {
         Ok(cfg)
     }
 
-    pub fn merge(&mut self, other: Config<C>) {
+    pub fn merge(&mut self, other: Config) {
         self.contexts.extend(other.contexts);
         self.requests.extend(other.requests);
         self.responses.extend(other.responses);
     }
 
-    pub fn merge_contexts(&self, names: &[String]) -> Result<C> {
-        let mut context: C = C::default();
+    pub fn merge_contexts(&self, names: &[String]) -> Result<HashMap<String, String>> {
+        let mut context: HashMap<String, String> = HashMap::new();
         for n in names {
-            context.merge(
-                self.contexts
-                    .get(n)
-                    .ok_or(Error::ContextNotFound(n.clone()))?,
-            );
+            match self.contexts.get(n) {
+                Some(c) => {
+                    context.extend(c.iter().map(|(k, v)| (k.clone(), v.clone())));
+                }
+                None => {
+                    return Err(Error::ContextNotFound(n.clone()));
+                }
+            };
         }
         Ok(context)
     }
+
+    pub fn apply(&self, cxt: &HashMap<String, String>, s: &str) -> String {
+        let mut output = String::new();
+        let mut last = 0;
+
+        for capture in crate::VARIABLE.captures_iter(s) {
+            let r = capture.get(0).unwrap().range();
+            let name = capture.get(1).unwrap().as_str();
+            output.push_str(&s[last..r.start]);
+            let replacement = match name.starts_with("response.") {
+                true => match self.find_response_data(&name[9..]) {
+                    Some(v) => v,
+                    None => "".to_string(),
+                },
+                false => match cxt.get(name) {
+                    Some(v) => v.clone(),
+                    None => "".to_string(),
+                },
+            };
+
+            output.push_str(&replacement);
+
+            last = r.end;
+        }
+
+        output.push_str(&s[last..]);
+        output
+    }
+
+    fn find_response_data(&self, name: &str) -> Option<String> {
+        use serde_json::value::Index;
+
+        let tokens = name.split('.').collect::<Vec<_>>();
+        if tokens.len() < 2 {
+            return None;
+        }
+        let response = self.responses.get(tokens[0])?;
+        let mut cur: serde_json::Value = serde_json::from_str(&response.body).ok()?;
+        for token in tokens[1..tokens.len()].iter() {
+            let t: Box<dyn Index> = match token.parse::<usize>() {
+                Ok(v) => Box::new(v),
+                Err(_) => Box::new(token),
+            };
+            cur = match cur.get(t.as_ref()) {
+                Some(v) => v.clone(),
+                None => return None,
+            }
+        }
+        Some(
+            cur.to_string()
+                .trim_start_matches('"')
+                .trim_end_matches('"')
+                .to_string(),
+        )
+    }
 }
 
-impl<C: Context + Serialize> std::fmt::Display for Config<C> {
+impl std::fmt::Display for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let c = serde_yaml::to_string(&self).unwrap();
         write!(f, "{}", c)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_apply() {
+        let mut cxt = HashMap::new();
+        cxt.insert("name".to_string(), "World".to_string());
+        cxt.insert("age".to_string(), "4.543 Billion".to_string());
+
+        let mut cfg = Config::default();
+        cfg.responses.insert(
+            "hello".to_string(),
+            Response {
+                status_code: 200,
+                headers: HashMap::new(),
+                body: "{ \"name\": \"Galaxy\", \"age\": \"13.61 Billion\" }".to_string(),
+            },
+        );
+
+        let s = cfg.apply(&cxt, "Hello, ${name}! You are ${age} years old. My name is ${response.hello.name}. I am ${response.hello.age} years old.${response.hello.some.bad.one}${response.}");
+        assert_eq!(
+            s,
+            "Hello, World! You are 4.543 Billion years old. My name is Galaxy. I am 13.61 Billion years old."
+        );
     }
 }

@@ -1,7 +1,6 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
-use apictl::{Config, List, OutputFormat, Response};
+use apictl::{Config, List, OutputFormat, Request, Response};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -67,7 +66,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Parse configuration files.
-    let mut cfg: Config<HashMap<String, String>> = Config::new_from_dir(&args.config)?;
+    let cfg: Config = Config::new_from_dir(&args.config)?;
 
     // Execute the command.
     match args.command {
@@ -78,8 +77,8 @@ async fn main() -> Result<()> {
             Requests::Run { contexts, requests } => {
                 let context = cfg.merge_contexts(&contexts)?;
                 for r in requests {
-                    let request = cfg.requests.get_mut(&r).unwrap();
-                    request.apply(&context);
+                    let mut request: Request = cfg.requests.get(&r).unwrap().clone();
+                    request.apply(&cfg, &context);
                     let result = request.request().await?;
                     let resp = Response::from(result).await?;
                     let mut path = args.config.clone();
@@ -87,7 +86,7 @@ async fn main() -> Result<()> {
                     std::fs::create_dir_all(&path)?;
                     path.push(&r);
                     path.set_extension("yaml");
-                    resp.save::<HashMap<String, String>>(&r, &path)?;
+                    resp.save(&r, &path)?;
                     println!("{}", resp.body);
                 }
             }
