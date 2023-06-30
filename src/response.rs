@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::Path};
 
 use crate::List;
 
@@ -95,7 +95,7 @@ impl Response {
         })
     }
 
-    pub fn save(&self, cache_dir: &PathBuf, name: &str) -> Result<()> {
+    pub fn save(&self, cache_dir: &Path, name: &str) -> Result<()> {
         let path = cache_dir.join(format!("{}.yaml", name));
         std::fs::write(path, serde_yaml::to_string(&self)?).map_err(ResponseError::Io)
     }
