@@ -186,6 +186,7 @@ mod tests {
             "hello".to_string(),
             Response {
                 status_code: 200,
+                version: "HTTP/1.1".to_string(),
                 headers: HashMap::new(),
                 body: "{ \"name\": \"Galaxy\", \"age\": \"13.61 Billion\" }".to_string(),
             },

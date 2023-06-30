@@ -1,0 +1,27 @@
+name: test
+run-name: test ${{ github.ref }}
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  check:
+    name: Rust project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: setup rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+      - name: cargo check
+        run: cargo check
+      - name: cargo clippy
+        run: cargo clippy
+      - name: cargo test
+        run: cargo test
