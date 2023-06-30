@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use walkdir::WalkDir;
 
+/// Errors that can occur when managing the configuration.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("io error: {0}")]
@@ -22,6 +23,7 @@ pub enum Error {
     ContextNotFound(String),
 }
 
+/// The configuration for the CLI.
 #[derive(Default, Debug, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -32,6 +34,7 @@ pub struct Config {
     pub responses: HashMap<String, Response>,
 }
 
+/// Result is a convenience type for config errors.
 type Result<T> = std::result::Result<T, Error>;
 
 impl Config {
@@ -42,6 +45,7 @@ impl Config {
 
     pub fn new_from_path(path: &PathBuf) -> Result<Self> {
         let mut cfg: Config = Config::default();
+        // Loop through the path and only parse yaml files.
         for entry in WalkDir::new(path).follow_links(true) {
             let entry = entry.map_err(|e| Error::Path(e.to_string()))?;
             if entry.file_type().is_file() {
@@ -59,13 +63,37 @@ impl Config {
         Ok(cfg)
     }
 
+    pub fn load_responses(&mut self, path: &PathBuf) -> Result<()> {
+        for entry in WalkDir::new(path).follow_links(true) {
+            let entry = entry.map_err(|e| Error::Path(e.to_string()))?;
+            if entry.file_type().is_file() {
+                let path = entry.path();
+                if let Some(ext) = path.extension() {
+                    if ext == "yaml" || ext == "yml" {
+                        // Get the basename without extension.
+                        let name = path
+                            .file_stem()
+                            .ok_or(Error::Path("non-ascii path".into()))?
+                            .to_str()
+                            .ok_or(Error::Path("non-ascii path".into()))?
+                            .to_string();
+                        let contents = std::fs::read_to_string(path)?;
+                        self.responses
+                            .insert(name, serde_yaml::from_str(&contents)?);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn merge(&mut self, other: Config) {
         self.contexts.extend(other.contexts);
         self.requests.extend(other.requests);
         self.responses.extend(other.responses);
     }
 
-    pub fn merge_contexts(&self, names: &[String]) -> Result<HashMap<String, String>> {
+    pub fn get_merge_contexts(&self, names: &[String]) -> Result<HashMap<String, String>> {
         let mut context: HashMap<String, String> = HashMap::new();
         for n in names {
             match self.contexts.get(n) {

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use apictl::{Config, List, OutputFormat, Request, Response};
+use apictl::{Config, List, OutputFormat, Request};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -33,6 +33,10 @@ enum Command {
     /// Manage contexts.
     #[command(subcommand)]
     Contexts(Contexts),
+
+    /// Manage responses.
+    #[command(subcommand)]
+    Responses(Responses),
 }
 
 #[derive(Subcommand)]
@@ -52,6 +56,14 @@ enum Requests {
 
         /// The requests to run.
         requests: Vec<String>,
+
+        /// Include response and header values before the body.
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Only output errors.
+        #[arg(short, long)]
+        quiet: bool,
     },
 }
 
@@ -59,7 +71,17 @@ enum Requests {
 enum Contexts {
     /// List all the contexts.
     List {
-        /// The format in which to output the requests.
+        /// The format in which to output the contexts.
+        #[arg(short, long, value_name = "OUTPUT", default_value = "tsv")]
+        output: OutputFormat,
+    },
+}
+
+#[derive(Subcommand)]
+enum Responses {
+    /// List all the response.
+    List {
+        /// The format in which to output the responses.
         #[arg(short, long, value_name = "OUTPUT", default_value = "tsv")]
         output: OutputFormat,
     },
@@ -69,22 +91,45 @@ enum Contexts {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Parse configuration files.
-    let mut cfg = Config::new_from_path(&args.config)?;
+    // Make sure our cache dir exists
+    let response_dir = args.cache.clone().join("responses");
+    std::fs::create_dir_all(&response_dir)?;
 
-    // Merge responses from the cache.
-    let cached = Config::new_from_path(&args.cache)?;
-    cfg.merge(cached);
+    // Parse our config.
+    let mut cfg = Config::new_from_path(&args.config)?;
+    cfg.load_responses(&response_dir)?;
 
     // Execute the command.
     match args.command {
+        Command::Responses(responses) => match responses {
+            Responses::List { output } => {
+                cfg.responses.output(output)?;
+            }
+        },
+        Command::Contexts(contexts) => match contexts {
+            Contexts::List { output } => {
+                cfg.contexts.output(output)?;
+            }
+        },
         Command::Requests(requests) => match requests {
             Requests::List { output } => {
                 cfg.requests.output(output)?;
             }
-            Requests::Run { contexts, requests } => {
-                let context = cfg.merge_contexts(&contexts)?;
+            Requests::Run {
+                contexts,
+                requests,
+                verbose,
+                quiet,
+            } => {
+                let context = cfg.get_merge_contexts(&contexts)?;
+                let mut first = true;
                 for r in requests {
+                    if !first {
+                        println!();
+                    }
+                    first = false;
+
+                    // Get the request by name and apply the context.
                     let mut request: Request = match cfg.requests.get(&r) {
                         Some(r) => r.clone(),
                         None => {
@@ -92,20 +137,24 @@ async fn main() -> Result<()> {
                         }
                     };
                     request.apply(&cfg, &context);
-                    let result = request.request().await?;
-                    let resp = Response::from(result).await?;
-                    let mut path = args.cache.clone();
-                    std::fs::create_dir_all(&path)?;
-                    path.push(&r);
-                    path.set_extension("yaml");
-                    resp.save(&r, &path)?;
-                    println!("{}", resp.body);
+
+                    // Make the requests.
+                    let resp = request.request().await?;
+
+                    // TODO stream to both places?
+
+                    // We want to save the response to our cache and
+                    // then print it out.
+                    resp.save(&response_dir, &r)?;
+                    if verbose && !quiet {
+                        println!("{}", resp);
+                    } else if !quiet {
+                        println!("{}", resp.body);
+                    }
+
+                    // Save the response incase it is used by a later request.
+                    cfg.responses.insert(r, resp);
                 }
-            }
-        },
-        Command::Contexts(contexts) => match contexts {
-            Contexts::List { output } => {
-                cfg.contexts.output(output)?;
             }
         },
     }

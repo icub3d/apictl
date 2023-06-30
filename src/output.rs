@@ -1,16 +1,22 @@
+/// Output is used to help output commands in a variety of formats.
 use std::collections::HashMap;
 
 use prettytable::{Cell, Row, Table};
 use serde::Serialize;
 use thiserror::Error;
 
+/// OutputFormat is the format to output the data in.
 #[derive(Clone)]
 pub enum OutputFormat {
+    /// uses prettytable
     Table,
+    /// tab delimited
     TSV,
+    /// yaml
     Yaml,
 }
 
+/// Errors that can occur when outputting data.
 #[derive(Error, Debug)]
 pub enum OutputError {
     #[error("yaml parse error: {0}")]
@@ -20,6 +26,7 @@ pub enum OutputError {
     Format(String),
 }
 
+/// Result is a convenience type for output results.
 pub type Result<T> = std::result::Result<T, OutputError>;
 
 impl std::str::FromStr for OutputFormat {
@@ -35,10 +42,15 @@ impl std::str::FromStr for OutputFormat {
     }
 }
 
+/// List is a trait for types that can be output.
 pub trait List: Serialize {
+    /// Returns the headers (fields) for the output.
     fn headers(&self) -> Vec<String>;
+
+    /// Returns the values for the output.
     fn values(&self) -> Vec<Vec<String>>;
 
+    /// Outputs the data in the given format.
     fn output(&self, format: OutputFormat) -> Result<()> {
         match format {
             OutputFormat::Yaml => {
@@ -71,6 +83,7 @@ pub trait List: Serialize {
     }
 }
 
+/// This will implement List for Contexts.
 impl List for HashMap<String, HashMap<String, String>> {
     fn headers(&self) -> Vec<String> {
         vec!["Name".into()]

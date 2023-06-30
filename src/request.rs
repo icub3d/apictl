@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use crate::{Config, List};
+use crate::{Config, List, Response, ResponseError};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Implement List for Requests.
 impl List for HashMap<String, Request> {
     fn headers(&self) -> Vec<String> {
         vec![
@@ -29,6 +30,7 @@ impl List for HashMap<String, Request> {
     }
 }
 
+/// RequestError is the error type for requests.
 #[derive(Error, Debug)]
 pub enum RequestError {
     #[error("http error: {0}")]
@@ -37,10 +39,17 @@ pub enum RequestError {
     #[error("io error: {0}")]
     Io(std::io::Error),
 
+    #[error("response parse error: {0}")]
+    Parse(ResponseError),
+
     #[error("unsupported method: {0}")]
     UnsupportedMethod(String),
 }
 
+/// Result is the result type for requests.
+type Result<T> = std::result::Result<T, RequestError>;
+
+/// Requests from the configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Request {
     pub description: String,
@@ -61,8 +70,10 @@ fn default_method() -> String {
 }
 
 impl Request {
+    /// Apply the configuration and context to the request. All parts
+    /// of the request are replaced with the response values and
+    /// contexts.
     pub fn apply(&mut self, cfg: &Config, cxt: &HashMap<String, String>) {
-        self.description = cfg.apply(cxt, &self.description);
         self.url = cfg.apply(cxt, &self.url);
         self.method = cfg.apply(cxt, &self.method);
         for value in self.headers.values_mut() {
@@ -101,7 +112,8 @@ impl Request {
         }
     }
 
-    pub async fn request(&self) -> Result<reqwest::Response, RequestError> {
+    /// Perform the request and return it's response.
+    pub async fn request(&self) -> Result<Response> {
         use reqwest::Client;
 
         let mut builder = match self.method.as_str() {
@@ -129,7 +141,6 @@ impl Request {
                         builder.body(std::fs::read_to_string(path).map_err(RequestError::Io)?);
                 }
                 RawBody::Text { data } => {
-                    dbg!(&data);
                     builder = builder.body(data.clone());
                 }
             },
@@ -155,7 +166,9 @@ impl Request {
             }
         }
 
-        builder.send().await.map_err(RequestError::Http)
+        Response::from(builder.send().await.map_err(RequestError::Http)?)
+            .await
+            .map_err(RequestError::Parse)
     }
 }
 
