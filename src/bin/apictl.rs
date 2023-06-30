@@ -12,9 +12,13 @@ use clap::{Parser, Subcommand};
 #[command(version = "0.1")]
 #[command(long_about = None)]
 struct Args {
-    /// The folder containing the configuration and cache files.
-    #[arg(short, long, value_name = "CONFIG", default_value = ".apictl")]
+    /// The file or folder containing the configuration and cache files.
+    #[arg(short, long, value_name = "CONFIG", default_value = ".apictl.yaml")]
     config: PathBuf,
+
+    /// The folder used to store responses.
+    #[arg(long, value_name = "CACHE", default_value = ".apictl")]
+    cache: PathBuf,
 
     #[command(subcommand)]
     command: Command,
@@ -66,7 +70,11 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Parse configuration files.
-    let cfg: Config = Config::new_from_dir(&args.config)?;
+    let mut cfg = Config::new_from_path(&args.config)?;
+
+    // Merge responses from the cache.
+    let cached = Config::new_from_path(&args.cache)?;
+    cfg.merge(cached);
 
     // Execute the command.
     match args.command {
@@ -77,12 +85,16 @@ async fn main() -> Result<()> {
             Requests::Run { contexts, requests } => {
                 let context = cfg.merge_contexts(&contexts)?;
                 for r in requests {
-                    let mut request: Request = cfg.requests.get(&r).unwrap().clone();
+                    let mut request: Request = match cfg.requests.get(&r) {
+                        Some(r) => r.clone(),
+                        None => {
+                            return Err(anyhow::anyhow!("Request not found: {}", r));
+                        }
+                    };
                     request.apply(&cfg, &context);
                     let result = request.request().await?;
                     let resp = Response::from(result).await?;
-                    let mut path = args.config.clone();
-                    path.push("cache");
+                    let mut path = args.cache.clone();
                     std::fs::create_dir_all(&path)?;
                     path.push(&r);
                     path.set_extension("yaml");

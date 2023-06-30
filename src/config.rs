@@ -40,7 +40,7 @@ impl Config {
         Ok(serde_yaml::from_str(&contents)?)
     }
 
-    pub fn new_from_dir(path: &PathBuf) -> Result<Self> {
+    pub fn new_from_path(path: &PathBuf) -> Result<Self> {
         let mut cfg: Config = Config::default();
         for entry in WalkDir::new(path).follow_links(true) {
             let entry = entry.map_err(|e| Error::Path(e.to_string()))?;
