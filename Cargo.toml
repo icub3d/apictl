@@ -3,9 +3,9 @@ name = "apictl"
 version = "0.1.0"
 edition = "2021"
 authors = ["Joshua Marsh <joshua.marshian@gmail.com>"]
-readme = "https://github.com/icub3d/apictl/blob/main/README.md"
 repository = "https://github.com/icub3d/apictl"
 description = "Interact with APIs via the command-line."
+readme = "README.md"
 license = "MIT"
 
 # See more keys and their definitions at
