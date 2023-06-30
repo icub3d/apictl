@@ -8,7 +8,9 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "apictl")]
 #[command(author = "Joshua Marsh (icub3d) <joshua.marshian@gmail.com")]
-#[command(about = "A command line interface for making API calls.")]
+#[command(
+    about = "A command line interface for making API calls. See https://github.com/icub3d/apictl for additional details."
+)]
 #[command(version = "0.1")]
 #[command(long_about = None)]
 struct Args {
@@ -141,7 +143,7 @@ async fn main() -> Result<()> {
                     // Make the requests.
                     let resp = request.request().await?;
 
-                    // TODO stream to both places?
+                    // TODO: (?) stream to both places
 
                     // We want to save the response to our cache and
                     // then print it out.

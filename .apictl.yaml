@@ -1,7 +1,7 @@
 contexts:
   local:
     base_url: http://localhost:3000
-    # todo: allow for non-string characters
+    # TODO: (?) allow for non-string characters
     pagination_limit: "10"
 requests:
   get-posts:
