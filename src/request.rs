@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{Config, List, Response, ResponseError};
+use crate::{Applicator, List, Response, ResponseError};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -73,38 +73,38 @@ impl Request {
     /// Apply the configuration and context to the request. All parts
     /// of the request are replaced with the response values and
     /// contexts.
-    pub fn apply(&mut self, cfg: &Config, cxt: &HashMap<String, String>) {
-        self.url = cfg.apply(cxt, &self.url);
-        self.method = cfg.apply(cxt, &self.method);
+    pub fn apply(&mut self, app: &Applicator) {
+        self.url = app.apply(&self.url);
+        self.method = app.apply(&self.method);
         for value in self.headers.values_mut() {
-            *value = cfg.apply(cxt, value);
+            *value = app.apply(value);
         }
         for value in self.query_parameters.values_mut() {
-            *value = cfg.apply(cxt, value);
+            *value = app.apply(value);
         }
         match &mut self.body {
             Body::None => {}
             Body::Form { data } => {
                 for value in data.values_mut() {
-                    *value = cfg.apply(cxt, value);
+                    *value = app.apply(value);
                 }
             }
             Body::Raw { from } => match from {
                 RawBody::File { path } => {
-                    *path = cfg.apply(cxt, path);
+                    *path = app.apply(path);
                 }
                 RawBody::Text { data } => {
-                    *data = cfg.apply(cxt, data);
+                    *data = app.apply(data);
                 }
             },
             Body::MultiPart { data } => {
                 for value in data.values_mut() {
                     match value {
                         MultiPartField::Text { data } => {
-                            *data = cfg.apply(cxt, data);
+                            *data = app.apply(data);
                         }
                         MultiPartField::File { path } => {
-                            *path = cfg.apply(cxt, path);
+                            *path = app.apply(path);
                         }
                     }
                 }
@@ -259,8 +259,8 @@ body:
 "#;
 
         let mut request: Request = serde_yaml::from_str(request).unwrap();
-        let mut cxt = HashMap::new();
-        cxt.extend(vec![
+        let mut context = HashMap::new();
+        context.extend(vec![
             (
                 "base_url".to_string(),
                 "https://api.example.com".to_string(),
@@ -269,9 +269,8 @@ body:
             ("value1".to_string(), "value1".to_string()),
         ]);
 
-        let cfg = Config::default();
-
-        request.apply(&cfg, &cxt);
+        let app = Applicator::new(context, HashMap::new());
+        request.apply(&app);
 
         assert_eq!(request.description, "post using key/value pairs");
         assert_eq!(request.tags, vec!["post", "form"]);

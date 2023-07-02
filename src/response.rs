@@ -99,4 +99,27 @@ impl Response {
         let path = cache_dir.join(format!("{}.yaml", name));
         std::fs::write(path, serde_yaml::to_string(&self)?).map_err(ResponseError::Io)
     }
+
+    pub fn find_path_in_body(&self, key: &str) -> Option<String> {
+        use serde_json::value::Index;
+        let tokens = key.split('.').collect::<Vec<_>>();
+
+        let mut cur: serde_json::Value = serde_json::from_str(&self.body).ok()?;
+        for token in tokens {
+            let t: Box<dyn Index> = match token.parse::<usize>() {
+                Ok(v) => Box::new(v),
+                Err(_) => Box::new(token),
+            };
+            cur = match cur.get(t.as_ref()) {
+                Some(v) => v.clone(),
+                None => return None,
+            }
+        }
+        Some(
+            cur.to_string()
+                .trim_start_matches('"')
+                .trim_end_matches('"')
+                .to_string(),
+        )
+    }
 }

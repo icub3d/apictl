@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use apictl::{Config, List, OutputFormat, Request};
+use apictl::{Applicator, Config, List, OutputFormat, Request, TestResults};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -39,6 +39,10 @@ enum Command {
     /// Manage responses.
     #[command(subcommand)]
     Responses(Responses),
+
+    /// Manage tests.
+    #[command(subcommand)]
+    Tests(Tests),
 }
 
 #[derive(Subcommand)]
@@ -89,6 +93,32 @@ enum Responses {
     },
 }
 
+#[derive(Subcommand)]
+enum Tests {
+    /// List all the tests.
+    List {
+        /// The format in which to display the requests.
+        #[arg(short, long, value_name = "OUTPUT", default_value = "table")]
+        output: OutputFormat,
+    },
+
+    /// Describe the given tests.
+    Describe {
+        /// The tests to describe.
+        tests: Vec<String>,
+    },
+
+    /// Run the given tests.
+    Run {
+        /// The contexts to use.
+        #[arg(short, long, value_name = "CONTEXT")]
+        contexts: Vec<String>,
+
+        /// The tests to run.
+        tests: Vec<String>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -123,7 +153,9 @@ async fn main() -> Result<()> {
                 verbose,
                 quiet,
             } => {
-                let context = cfg.get_merge_contexts(&contexts)?;
+                let context = cfg.merge_contexts(&contexts)?;
+                let mut app = Applicator::new(context, cfg.responses);
+
                 let mut first = true;
                 for r in requests {
                     if !first {
@@ -138,7 +170,7 @@ async fn main() -> Result<()> {
                             return Err(anyhow::anyhow!("Request not found: {}", r));
                         }
                     };
-                    request.apply(&cfg, &context);
+                    request.apply(&app);
 
                     // Make the requests.
                     let resp = request.request().await?;
@@ -155,8 +187,48 @@ async fn main() -> Result<()> {
                     }
 
                     // Save the response incase it is used by a later request.
-                    cfg.responses.insert(r, resp);
+                    app.add_response(r, resp);
                 }
+            }
+        },
+        Command::Tests(tests) => match tests {
+            Tests::List { output } => {
+                cfg.tests.output(output)?;
+            }
+            Tests::Describe { tests } => {
+                for t in tests {
+                    if let Some(test) = cfg.tests.get(&t) {
+                        println!("test: {}", t);
+                        println!("{}", test);
+                    } else {
+                        dbg!(&cfg.tests);
+                        return Err(anyhow::anyhow!("test not found: {}", t));
+                    }
+                }
+            }
+            Tests::Run { contexts, tests } => {
+                let context = cfg.merge_contexts(&contexts)?;
+                let mut results = TestResults::new("results".into());
+                let mut first = true;
+                for t in tests {
+                    if !first {
+                        println!();
+                    }
+                    first = false;
+
+                    // Get the test by name and apply the context.
+                    let test = match cfg.tests.get(&t) {
+                        Some(t) => t,
+                        None => {
+                            return Err(anyhow::anyhow!("Test not found: {}", t));
+                        }
+                    };
+
+                    let result = test.execute(t, &cfg, &context).await?;
+                    results.add_child(result);
+                }
+                results.complete();
+                results.print("");
             }
         },
     }

@@ -38,3 +38,32 @@ requests:
     tags: [get]
     description: get the post from new-post
     url: "${base_url}/posts/${response.new-post.id}"
+tests:
+  create-new-post:
+    description: create a new post and check to make sure it's there.
+    steps:
+      - name: create-post
+        request: new-post
+        asserts:
+          - type: status_code
+            value: 201
+          - type: header_contains
+            key: content-type
+            value: application/json
+          - type: equals
+            key: userId
+            value: "1"
+          - type: not_equals
+            key: userId
+            value: "10"
+      - name: check-post
+        request: get-new-post
+        asserts:
+          - type: status_code
+            value: 200
+          - type: equals
+            key: userId
+            value: "1"
+          - type: equals
+            key: title
+            value: "test post"
