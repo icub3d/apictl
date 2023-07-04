@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use apictl::{Applicator, Config, List, OutputFormat, Request, TestResults};
+use apictl::{Applicator, Config, List, OutputFormat, Request};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -208,7 +208,6 @@ async fn main() -> Result<()> {
             }
             Tests::Run { contexts, tests } => {
                 let context = cfg.merge_contexts(&contexts)?;
-                let mut results = TestResults::new("results".into());
                 let mut first = true;
                 for t in tests {
                     if !first {
@@ -224,11 +223,8 @@ async fn main() -> Result<()> {
                         }
                     };
 
-                    let result = test.execute(t, &cfg, &context).await?;
-                    results.add_child(result);
+                    test.execute(t, &cfg, &context).await?;
                 }
-                results.complete();
-                results.print("");
             }
         },
     }

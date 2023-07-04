@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::io::{stdout, Stdout, Write};
 
 use crate::{Applicator, Config, List, Response};
 
+use crossterm::{cursor, terminal, ExecutableCommand};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -38,13 +40,16 @@ pub enum TestError {
 
     #[error("regex error: {0}")]
     RegexError(#[from] regex::Error),
+
+    #[error("terminal error: {0}")]
+    TerminalError(std::io::Error),
 }
 
 /// Result is the result type for tests.
 pub type Result<T> = std::result::Result<T, TestError>;
 
 /// TestState is the current state of a test.
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub enum TestState {
     /// NotRun indicates that the test has not been run.
     #[default]
@@ -80,48 +85,96 @@ pub struct TestResults {
 }
 
 impl TestResults {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: &str, test: &Test) -> Self {
         Self {
-            name,
+            name: name.to_string(),
             state: TestState::NotRun,
-            children: Vec::new(),
+            children: test
+                .steps
+                .iter()
+                .map(|s| Self {
+                    name: s.name.clone(),
+                    state: TestState::NotRun,
+                    children: s
+                        .asserts
+                        .iter()
+                        .map(|a| Self {
+                            name: format!("{}", a.assert),
+                            state: TestState::NotRun,
+                            children: Vec::new(),
+                        })
+                        .collect(),
+                })
+                .collect(),
         }
     }
 
-    pub fn create_child(&mut self, name: String, state: TestState) {
-        self.children.push(TestResults {
-            name,
-            state,
-            children: Vec::new(),
-        });
+    pub fn is_empty(&self) -> bool {
+        self.children.is_empty()
     }
 
-    pub fn add_child(&mut self, child: TestResults) {
-        self.children.push(child);
+    pub fn len(&self) -> usize {
+        let mut len = 1;
+        for child in &self.children {
+            len += child.len();
+        }
+        len
+    }
+
+    pub fn update(&mut self, names: &[String], state: TestState) {
+        if names.len() == 1 && self.name == names[0] {
+            self.state = state;
+        } else if !names.is_empty() && self.name == names[0] {
+            let child = self
+                .children
+                .iter_mut()
+                .find(|c| c.name == names[1])
+                .unwrap();
+            child.update(&names[1..], state);
+        }
     }
 
     pub fn complete(&mut self) {
         self.state = TestState::Passed;
-        for child in &self.children {
+        for child in self.children.iter_mut() {
             if let TestState::Failed(_) = child.state {
                 self.state = TestState::Failed("dependent test failed".into());
                 break;
             }
+            if !child.children.is_empty() {
+                child.complete();
+            }
         }
     }
 
-    pub fn print(&self, prefix: &str) {
-        println!("{}{} {}", prefix, self.state, self.name);
+    pub fn print(&self, s: &mut Stdout, prefix: &str) -> Result<()> {
+        writeln!(s, "{}{} {}", prefix, self.state, self.name).map_err(TestError::TerminalError)?;
         for child in &self.children {
-            child.print(&format!("{}  ", prefix));
+            child.print(s, &format!("{}  ", prefix))?;
         }
+        Ok(())
+    }
+
+    pub fn output(&self, s: &mut Stdout, prefix: &str) -> Result<()> {
+        s.execute(cursor::MoveUp(self.len() as u16))
+            .map_err(TestError::TerminalError)?;
+        s.execute(terminal::Clear(terminal::ClearType::FromCursorDown))
+            .map_err(TestError::TerminalError)?;
+        writeln!(s, "{}{} {}", prefix, self.state, self.name).map_err(TestError::TerminalError)?;
+        for child in &self.children {
+            child.print(s, &format!("{}  ", prefix))?;
+        }
+        Ok(())
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Test {
-    description: String,
-    steps: Vec<Step>,
+    pub description: String,
+    pub steps: Vec<Step>,
+
+    #[serde(default)]
+    pub state: TestState,
 }
 
 impl Test {
@@ -131,9 +184,13 @@ impl Test {
         cfg: &Config,
         context: &HashMap<String, String>,
     ) -> Result<TestResults> {
-        let mut results = TestResults::new(name);
+        let mut results = TestResults::new(&name, self);
+        let mut s = stdout();
+        results.print(&mut s, "")?;
+        let mut names = vec![name];
         let mut app = Applicator::new(context.clone(), cfg.responses.clone());
         for step in &self.steps {
+            names.push(step.name.clone());
             let mut request = match cfg.requests.get(&step.request) {
                 Some(r) => r.clone(),
                 None => {
@@ -147,20 +204,22 @@ impl Test {
             // Save the response incase it is used by a later request.
             app.add_response(step.request.clone(), resp.clone());
 
-            let mut step_result = TestResults::new(step.name.clone());
             for assert in &step.asserts {
-                step_result.create_child(
-                    format!("{}", assert),
-                    match assert.execute(&resp) {
-                        Ok(_) => TestState::Passed,
-                        Err(e) => TestState::Failed(e.to_string()),
-                    },
-                );
+                names.push(format!("{}", assert.assert));
+                match assert.execute(&resp) {
+                    Ok(_) => results.update(&names, TestState::Passed),
+                    Err(e) => results.update(&names, TestState::Failed(e.to_string())),
+                };
+
+                results.output(&mut s, "")?;
+                names.pop();
             }
-            step_result.complete();
-            results.add_child(step_result);
+            results.update(&names, TestState::Passed);
+            results.output(&mut s, "")?;
+            names.pop();
         }
-        results.complete();
+        results.state = TestState::Passed;
+        results.output(&mut s, "")?;
         Ok(results)
     }
 }
@@ -186,7 +245,10 @@ impl std::fmt::Display for Test {
 pub struct Step {
     name: String,
     request: String,
-    asserts: Vec<Assert>,
+    asserts: Vec<AssertWithTestState>,
+
+    #[serde(default)]
+    pub state: TestState,
 }
 
 impl std::fmt::Display for Step {
@@ -194,7 +256,7 @@ impl std::fmt::Display for Step {
         let mut asserts = self
             .asserts
             .iter()
-            .map(|a| format!("    {}", a))
+            .map(|a| format!("    {}", a.assert))
             .collect::<Vec<_>>();
         asserts.sort();
         write!(
@@ -204,6 +266,22 @@ impl std::fmt::Display for Step {
             self.request,
             asserts.join("\n  ")
         )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub struct AssertWithTestState {
+    #[serde(flatten)]
+    pub assert: Assert,
+
+    #[serde(default)]
+    pub state: TestState,
+}
+
+impl AssertWithTestState {
+    pub fn execute(&self, response: &Response) -> Result<()> {
+        self.assert.execute(response)
     }
 }
 

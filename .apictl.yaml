@@ -5,19 +5,20 @@ contexts:
     pagination_limit: "10"
 requests:
   get-posts:
-    tags: [get]
+    tags: [posts]
     description: a simple get
     url: "${base_url}/posts"
     query_parameters:
       _limit: "${pagination_limit}"
 
   get-user-from-first-post:
-    tags: [get]
+    tags: [posts]
     description: get the info for the first user from the call to get-posts
     url: "${base_url}/users/${response.get-posts.0.userId}"
 
+  # This example shows using the raw body type.
   new-post:
-    tags: [post]
+    tags: [posts]
     description: make a new post
     url: "${base_url}/posts"
     method: "POST"
@@ -35,9 +36,28 @@ requests:
           }
 
   get-new-post:
-    tags: [get]
+    tags: [posts]
     description: get the post from new-post
     url: "${base_url}/posts/${response.new-post.id}"
+
+  # This exampls shows using the form body type.
+  new-todo:
+    tags: [todos]
+    description: make a new todo
+    url: "${base_url}/todos"
+    method: POST
+    body:
+      type: form
+      data:
+        userId: "1"
+        title: "use apictl in my own repo"
+        completed: "false"
+
+  get-new-todo:
+    tags: [todos]
+    description: get the todo from new-todo
+    url: "${base_url}/todos/${response.new-todo.id}"
+
 tests:
   create-new-post:
     description: create a new post and check to make sure it's there.
