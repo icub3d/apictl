@@ -99,7 +99,7 @@ impl TestResults {
                         .asserts
                         .iter()
                         .map(|a| Self {
-                            name: format!("{}", a.assert),
+                            name: format!("{}", a),
                             state: TestState::NotRun,
                             children: Vec::new(),
                         })
@@ -172,9 +172,6 @@ impl TestResults {
 pub struct Test {
     pub description: String,
     pub steps: Vec<Step>,
-
-    #[serde(default)]
-    pub state: TestState,
 }
 
 impl Test {
@@ -205,7 +202,7 @@ impl Test {
             app.add_response(step.request.clone(), resp.clone());
 
             for assert in &step.asserts {
-                names.push(format!("{}", assert.assert));
+                names.push(format!("{}", assert));
                 match assert.execute(&resp) {
                     Ok(_) => results.update(&names, TestState::Passed),
                     Err(e) => results.update(&names, TestState::Failed(e.to_string())),
@@ -245,10 +242,7 @@ impl std::fmt::Display for Test {
 pub struct Step {
     name: String,
     request: String,
-    asserts: Vec<AssertWithTestState>,
-
-    #[serde(default)]
-    pub state: TestState,
+    asserts: Vec<Assert>,
 }
 
 impl std::fmt::Display for Step {
@@ -256,7 +250,7 @@ impl std::fmt::Display for Step {
         let mut asserts = self
             .asserts
             .iter()
-            .map(|a| format!("    {}", a.assert))
+            .map(|a| format!("    {}", a))
             .collect::<Vec<_>>();
         asserts.sort();
         write!(
@@ -266,22 +260,6 @@ impl std::fmt::Display for Step {
             self.request,
             asserts.join("\n  ")
         )
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub struct AssertWithTestState {
-    #[serde(flatten)]
-    pub assert: Assert,
-
-    #[serde(default)]
-    pub state: TestState,
-}
-
-impl AssertWithTestState {
-    pub fn execute(&self, response: &Response) -> Result<()> {
-        self.assert.execute(response)
     }
 }
 
