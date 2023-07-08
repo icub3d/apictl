@@ -87,3 +87,31 @@ tests:
           - type: equals
             key: title
             value: "test post"
+  create-new-todo:
+    description: create a new todo and check to make sure it's there.
+    steps:
+      - name: create-todo
+        request: new-todo
+        asserts:
+          - type: status_code
+            value: 201
+          - type: header_contains
+            key: content-type
+            value: application/json
+          - type: equals
+            key: userId
+            value: "1"
+          - type: not_equals
+            key: userId
+            value: "10"
+      - name: check-todo
+        request: get-new-todo
+        asserts:
+          - type: status_code
+            value: 200
+          - type: equals
+            key: userId
+            value: "1"
+          - type: equals
+            key: title
+            value: "use apictl in my own repo"

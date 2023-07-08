@@ -24,7 +24,7 @@ pub enum Error {
 }
 
 /// The configuration for the CLI.
-#[derive(Default, Debug, Deserialize, Serialize)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub contexts: HashMap<String, HashMap<String, String>>,
