@@ -2,12 +2,11 @@ use std::collections::HashMap;
 
 use crate::Response;
 
-use lazy_static::lazy_static;
+use std::sync::OnceLock;
+
 use regex::Regex;
 
-lazy_static! {
-    static ref VARIABLE: Regex = Regex::new(r"\$\{\s*([-.\w]+)\s*\}").unwrap();
-}
+static VARIABLE: OnceLock<Regex> = OnceLock::new();
 
 #[derive(Default)]
 pub struct Applicator {
@@ -28,7 +27,9 @@ impl Applicator {
         let mut output = String::new();
         let mut last = 0;
 
-        for capture in VARIABLE.captures_iter(s) {
+        let re = VARIABLE.get_or_init(|| Regex::new(r"\$\{\s*([-.\w]+)\s*\}").unwrap());
+
+        for capture in re.captures_iter(s) {
             let r = capture.get(0).unwrap().range();
             let name = capture.get(1).unwrap().as_str();
             output.push_str(&s[last..r.start]);
@@ -88,9 +89,12 @@ mod tests {
             ("howdy, ${ responses.get.name }", vec!["responses.get.name"]),
         ];
 
+        let re = VARIABLE.get_or_init(|| Regex::new(r"\$\{\s*([-.\w]+)\s*\}").unwrap());
+
         for (input, expected) in tests {
             let mut actual = vec![];
-            for capture in VARIABLE.captures_iter(input) {
+
+            for capture in re.captures_iter(input) {
                 actual.push(capture.get(1).unwrap().as_str());
             }
             assert_eq!(actual, expected);
